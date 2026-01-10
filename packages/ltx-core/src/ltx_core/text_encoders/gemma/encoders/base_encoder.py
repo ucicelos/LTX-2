@@ -49,6 +49,9 @@ class GemmaTextEncoderModelBase(torch.nn.Module):
             encoded_text_features, sequence_lengths, padding_side=padding_side
         )
 
+        target_device = normed_concated_encoded_text_features.device
+        if self.feature_extractor_linear.weight.device != target_device:
+            self.feature_extractor_linear = self.feature_extractor_linear.to(target_device)
         return self.feature_extractor_linear(normed_concated_encoded_text_features.to(encoded_text_features_dtype))
 
     def _convert_to_additive_mask(self, attention_mask: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
@@ -239,14 +242,24 @@ def _find_matching_dir(root_path: str, pattern: str) -> str:
     return str(matches[0].parent)
 
 
-def module_ops_from_gemma_root(gemma_root: str) -> tuple[ModuleOps, ...]:
+def module_ops_from_gemma_root(
+    gemma_root: str,
+    device_map: dict[str, int | str | torch.device] | str | None = None,
+    max_memory: dict[int | str, int | str] | None = None,
+    offload_folder: str | None = None,
+) -> tuple[ModuleOps, ...]:
     gemma_path = _find_matching_dir(gemma_root, "model*.safetensors")
     tokenizer_path = _find_matching_dir(gemma_root, "tokenizer.model")
 
     def load_gemma(module: GemmaTextEncoderModelBase) -> GemmaTextEncoderModelBase:
-        module.model = Gemma3ForConditionalGeneration.from_pretrained(
-            gemma_path, local_files_only=True, torch_dtype=torch.bfloat16
-        )
+        from_pretrained_kwargs = {"local_files_only": True, "torch_dtype": torch.bfloat16}
+        if device_map is not None:
+            from_pretrained_kwargs["device_map"] = device_map
+        if max_memory is not None:
+            from_pretrained_kwargs["max_memory"] = max_memory
+        if offload_folder is not None:
+            from_pretrained_kwargs["offload_folder"] = offload_folder
+        module.model = Gemma3ForConditionalGeneration.from_pretrained(gemma_path, **from_pretrained_kwargs)
         module._gemma_root = module._gemma_root or gemma_root
         return module
 

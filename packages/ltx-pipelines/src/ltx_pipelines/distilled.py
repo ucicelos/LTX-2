@@ -51,6 +51,10 @@ class DistilledPipeline:
         loras: list[LoraPathStrengthAndSDOps],
         device: torch.device = device,
         fp8transformer: bool = False,
+        device_maps: dict[str, dict[str, int | str | torch.device] | str] | None = None,
+        max_memory: dict[int | str, int | str] | None = None,
+        offload_folder: str | None = None,
+        cache_models: bool = True,
     ):
         self.device = device
         self.dtype = torch.bfloat16
@@ -63,6 +67,10 @@ class DistilledPipeline:
             gemma_root_path=gemma_root,
             loras=loras,
             fp8transformer=fp8transformer,
+            device_maps=device_maps,
+            max_memory=max_memory,
+            offload_folder=offload_folder,
+            cache_models=cache_models,
         )
 
         self.pipeline_components = PipelineComponents(

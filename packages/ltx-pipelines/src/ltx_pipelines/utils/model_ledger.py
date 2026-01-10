@@ -4,7 +4,8 @@ import torch
 
 from ltx_core.loader.primitives import LoraPathStrengthAndSDOps
 from ltx_core.loader.registry import DummyRegistry, Registry
-from ltx_core.loader.single_gpu_model_builder import SingleGPUModelBuilder as Builder
+from ltx_core.loader.multi_gpu_model_builder import MultiGPUModelBuilder
+from ltx_core.loader.single_gpu_model_builder import SingleGPUModelBuilder
 from ltx_core.model.audio_vae import (
     AUDIO_VAE_DECODER_COMFY_KEYS_FILTER,
     VOCODER_COMFY_KEYS_FILTER,
@@ -93,6 +94,10 @@ class ModelLedger:
         loras: LoraPathStrengthAndSDOps | None = None,
         registry: Registry | None = None,
         fp8transformer: bool = False,
+        device_maps: dict[str, dict[str, int | str | torch.device] | str] | None = None,
+        max_memory: dict[int | str, int | str] | None = None,
+        offload_folder: str | None = None,
+        cache_models: bool = True,
     ):
         self.dtype = dtype
         self.device = device
@@ -102,11 +107,22 @@ class ModelLedger:
         self.loras = loras or ()
         self.registry = registry or DummyRegistry()
         self.fp8transformer = fp8transformer
+        self.device_maps = device_maps or {}
+        self.max_memory = max_memory
+        self.offload_folder = offload_folder
+        self.cache_models = cache_models
+        self._model_cache: dict[str, torch.nn.Module] = {}
         self.build_model_builders()
 
     def build_model_builders(self) -> None:
+        def builder_for(component: str) -> type[SingleGPUModelBuilder] | type[MultiGPUModelBuilder]:
+            if component in self.device_maps:
+                return MultiGPUModelBuilder
+            return SingleGPUModelBuilder
+
         if self.checkpoint_path is not None:
-            self.transformer_builder = Builder(
+            transformer_builder = builder_for("transformer")
+            self.transformer_builder = transformer_builder(
                 model_path=self.checkpoint_path,
                 model_class_configurator=LTXModelConfigurator,
                 model_sd_ops=LTXV_MODEL_COMFY_RENAMING_MAP,
@@ -114,28 +130,28 @@ class ModelLedger:
                 registry=self.registry,
             )
 
-            self.vae_decoder_builder = Builder(
+            self.vae_decoder_builder = builder_for("video_decoder")(
                 model_path=self.checkpoint_path,
                 model_class_configurator=VideoDecoderConfigurator,
                 model_sd_ops=VAE_DECODER_COMFY_KEYS_FILTER,
                 registry=self.registry,
             )
 
-            self.vae_encoder_builder = Builder(
+            self.vae_encoder_builder = builder_for("video_encoder")(
                 model_path=self.checkpoint_path,
                 model_class_configurator=VideoEncoderConfigurator,
                 model_sd_ops=VAE_ENCODER_COMFY_KEYS_FILTER,
                 registry=self.registry,
             )
 
-            self.audio_decoder_builder = Builder(
+            self.audio_decoder_builder = builder_for("audio_decoder")(
                 model_path=self.checkpoint_path,
                 model_class_configurator=AudioDecoderConfigurator,
                 model_sd_ops=AUDIO_VAE_DECODER_COMFY_KEYS_FILTER,
                 registry=self.registry,
             )
 
-            self.vocoder_builder = Builder(
+            self.vocoder_builder = builder_for("vocoder")(
                 model_path=self.checkpoint_path,
                 model_class_configurator=VocoderConfigurator,
                 model_sd_ops=VOCODER_COMFY_KEYS_FILTER,
@@ -143,16 +159,22 @@ class ModelLedger:
             )
 
             if self.gemma_root_path is not None:
-                self.text_encoder_builder = Builder(
+                module_ops = module_ops_from_gemma_root(
+                    self.gemma_root_path,
+                    device_map=self.device_maps.get("gemma"),
+                    max_memory=self.max_memory,
+                    offload_folder=self.offload_folder,
+                )
+                self.text_encoder_builder = builder_for("text_encoder")(
                     model_path=self.checkpoint_path,
                     model_class_configurator=AVGemmaTextEncoderModelConfigurator,
                     model_sd_ops=AV_GEMMA_TEXT_ENCODER_KEY_OPS,
                     registry=self.registry,
-                    module_ops=module_ops_from_gemma_root(self.gemma_root_path),
+                    module_ops=module_ops,
                 )
 
         if self.spatial_upsampler_path is not None:
-            self.upsampler_builder = Builder(
+            self.upsampler_builder = builder_for("spatial_upsampler")(
                 model_path=self.spatial_upsampler_path,
                 model_class_configurator=LatentUpsamplerConfigurator,
                 registry=self.registry,
@@ -174,7 +196,34 @@ class ModelLedger:
             loras=(*self.loras, *loras),
             registry=self.registry,
             fp8transformer=self.fp8transformer,
+            device_maps=self.device_maps,
+            max_memory=self.max_memory,
+            offload_folder=self.offload_folder,
+            cache_models=self.cache_models,
         )
+
+    def _is_sharded_model(self, model: torch.nn.Module) -> bool:
+        return bool(getattr(model, "hf_device_map", None))
+
+    def _build_model(self, name: str, builder: SingleGPUModelBuilder | MultiGPUModelBuilder) -> torch.nn.Module:
+        if self.cache_models and name in self._model_cache:
+            return self._model_cache[name]
+        device_map = self.device_maps.get(name)
+        if isinstance(builder, MultiGPUModelBuilder):
+            no_split = ["BasicAVTransformerBlock"] if name == "transformer" else None
+            model = builder.build(
+                device_map=device_map,
+                dtype=self.dtype,
+                max_memory=self.max_memory,
+                offload_folder=self.offload_folder,
+                no_split_module_classes=no_split,
+                device=self._target_device(),
+            )
+        else:
+            model = builder.build(device=self._target_device(), dtype=self.dtype)
+        if self.cache_models:
+            self._model_cache[name] = model
+        return model
 
     def transformer(self) -> X0Model:
         if not hasattr(self, "transformer_builder"):
@@ -187,13 +236,13 @@ class ModelLedger:
                 module_ops=(UPCAST_DURING_INFERENCE,),
                 model_sd_ops=LTXV_MODEL_COMFY_RENAMING_WITH_TRANSFORMER_LINEAR_DOWNCAST_MAP,
             )
-            return X0Model(fp8_builder.build(device=self._target_device())).to(self.device).eval()
+            model = self._build_model("transformer", fp8_builder)
+            wrapped = X0Model(model)
+            return wrapped.eval()
         else:
-            return (
-                X0Model(self.transformer_builder.build(device=self._target_device(), dtype=self.dtype))
-                .to(self.device)
-                .eval()
-            )
+            model = self._build_model("transformer", self.transformer_builder)
+            wrapped = X0Model(model)
+            return wrapped.eval()
 
     def video_decoder(self) -> VideoDecoder:
         if not hasattr(self, "vae_decoder_builder"):
@@ -201,7 +250,10 @@ class ModelLedger:
                 "Video decoder not initialized. Please provide a checkpoint path to the ModelLedger constructor."
             )
 
-        return self.vae_decoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device).eval()
+        model = self._build_model("video_decoder", self.vae_decoder_builder)
+        if self._is_sharded_model(model):
+            return model.eval()
+        return model.to(self.device).eval()
 
     def video_encoder(self) -> VideoEncoder:
         if not hasattr(self, "vae_encoder_builder"):
@@ -209,7 +261,10 @@ class ModelLedger:
                 "Video encoder not initialized. Please provide a checkpoint path to the ModelLedger constructor."
             )
 
-        return self.vae_encoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device).eval()
+        model = self._build_model("video_encoder", self.vae_encoder_builder)
+        if self._is_sharded_model(model):
+            return model.eval()
+        return model.to(self.device).eval()
 
     def text_encoder(self) -> AVGemmaTextEncoderModel:
         if not hasattr(self, "text_encoder_builder"):
@@ -218,7 +273,10 @@ class ModelLedger:
                 "ModelLedger constructor."
             )
 
-        return self.text_encoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device).eval()
+        model = self._build_model("text_encoder", self.text_encoder_builder)
+        if self._is_sharded_model(model):
+            return model.eval()
+        return model.to(self.device).eval()
 
     def audio_decoder(self) -> AudioDecoder:
         if not hasattr(self, "audio_decoder_builder"):
@@ -226,7 +284,10 @@ class ModelLedger:
                 "Audio decoder not initialized. Please provide a checkpoint path to the ModelLedger constructor."
             )
 
-        return self.audio_decoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device).eval()
+        model = self._build_model("audio_decoder", self.audio_decoder_builder)
+        if self._is_sharded_model(model):
+            return model.eval()
+        return model.to(self.device).eval()
 
     def vocoder(self) -> Vocoder:
         if not hasattr(self, "vocoder_builder"):
@@ -234,10 +295,16 @@ class ModelLedger:
                 "Vocoder not initialized. Please provide a checkpoint path to the ModelLedger constructor."
             )
 
-        return self.vocoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device).eval()
+        model = self._build_model("vocoder", self.vocoder_builder)
+        if self._is_sharded_model(model):
+            return model.eval()
+        return model.to(self.device).eval()
 
     def spatial_upsampler(self) -> LatentUpsampler:
         if not hasattr(self, "upsampler_builder"):
             raise ValueError("Upsampler not initialized. Please provide upsampler path to the ModelLedger constructor.")
 
-        return self.upsampler_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device).eval()
+        model = self._build_model("spatial_upsampler", self.upsampler_builder)
+        if self._is_sharded_model(model):
+            return model.eval()
+        return model.to(self.device).eval()

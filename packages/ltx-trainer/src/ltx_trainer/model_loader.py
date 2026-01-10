@@ -49,6 +49,9 @@ def load_transformer(
     checkpoint_path: str | Path,
     device: Device = "cpu",
     dtype: torch.dtype = torch.bfloat16,
+    device_map: dict[str, int | str | torch.device] | str | None = None,
+    max_memory: dict[int | str, int | str] | None = None,
+    offload_folder: str | None = None,
 ) -> "LTXModel":
     """Load the LTX transformer model.
     Args:
@@ -58,23 +61,38 @@ def load_transformer(
     Returns:
         Loaded LTXModel transformer
     """
+    from ltx_core.loader.multi_gpu_model_builder import MultiGPUModelBuilder
     from ltx_core.loader.single_gpu_model_builder import SingleGPUModelBuilder
     from ltx_core.model.transformer.model_configurator import (
         LTXV_MODEL_COMFY_RENAMING_MAP,
         LTXModelConfigurator,
     )
 
-    return SingleGPUModelBuilder(
+    builder_cls = MultiGPUModelBuilder if device_map is not None else SingleGPUModelBuilder
+    builder = builder_cls(
         model_path=str(checkpoint_path),
         model_class_configurator=LTXModelConfigurator,
         model_sd_ops=LTXV_MODEL_COMFY_RENAMING_MAP,
-    ).build(device=_to_torch_device(device), dtype=dtype)
+    )
+    if device_map is None:
+        return builder.build(device=_to_torch_device(device), dtype=dtype)
+    return builder.build(
+        device_map=device_map,
+        dtype=dtype,
+        max_memory=max_memory,
+        offload_folder=offload_folder,
+        no_split_module_classes=["BasicAVTransformerBlock"],
+        device=_to_torch_device(device),
+    )
 
 
 def load_video_vae_encoder(
     checkpoint_path: str | Path,
     device: Device = "cpu",
     dtype: torch.dtype = torch.bfloat16,
+    device_map: dict[str, int | str | torch.device] | str | None = None,
+    max_memory: dict[int | str, int | str] | None = None,
+    offload_folder: str | None = None,
 ) -> "VideoEncoder":
     """Load the video VAE encoder (for preprocessing).
     Args:
@@ -84,20 +102,34 @@ def load_video_vae_encoder(
     Returns:
         Loaded VideoEncoder
     """
+    from ltx_core.loader.multi_gpu_model_builder import MultiGPUModelBuilder
     from ltx_core.loader.single_gpu_model_builder import SingleGPUModelBuilder
     from ltx_core.model.video_vae import VAE_ENCODER_COMFY_KEYS_FILTER, VideoEncoderConfigurator
 
-    return SingleGPUModelBuilder(
+    builder_cls = MultiGPUModelBuilder if device_map is not None else SingleGPUModelBuilder
+    builder = builder_cls(
         model_path=str(checkpoint_path),
         model_class_configurator=VideoEncoderConfigurator,
         model_sd_ops=VAE_ENCODER_COMFY_KEYS_FILTER,
-    ).build(device=_to_torch_device(device), dtype=dtype)
+    )
+    if device_map is None:
+        return builder.build(device=_to_torch_device(device), dtype=dtype)
+    return builder.build(
+        device_map=device_map,
+        dtype=dtype,
+        max_memory=max_memory,
+        offload_folder=offload_folder,
+        device=_to_torch_device(device),
+    )
 
 
 def load_video_vae_decoder(
     checkpoint_path: str | Path,
     device: Device = "cpu",
     dtype: torch.dtype = torch.bfloat16,
+    device_map: dict[str, int | str | torch.device] | str | None = None,
+    max_memory: dict[int | str, int | str] | None = None,
+    offload_folder: str | None = None,
 ) -> "VideoDecoder":
     """Load the video VAE decoder (for inference/validation).
     Args:
@@ -107,20 +139,34 @@ def load_video_vae_decoder(
     Returns:
         Loaded VideoDecoder
     """
+    from ltx_core.loader.multi_gpu_model_builder import MultiGPUModelBuilder
     from ltx_core.loader.single_gpu_model_builder import SingleGPUModelBuilder
     from ltx_core.model.video_vae import VAE_DECODER_COMFY_KEYS_FILTER, VideoDecoderConfigurator
 
-    return SingleGPUModelBuilder(
+    builder_cls = MultiGPUModelBuilder if device_map is not None else SingleGPUModelBuilder
+    builder = builder_cls(
         model_path=str(checkpoint_path),
         model_class_configurator=VideoDecoderConfigurator,
         model_sd_ops=VAE_DECODER_COMFY_KEYS_FILTER,
-    ).build(device=_to_torch_device(device), dtype=dtype)
+    )
+    if device_map is None:
+        return builder.build(device=_to_torch_device(device), dtype=dtype)
+    return builder.build(
+        device_map=device_map,
+        dtype=dtype,
+        max_memory=max_memory,
+        offload_folder=offload_folder,
+        device=_to_torch_device(device),
+    )
 
 
 def load_audio_vae_encoder(
     checkpoint_path: str | Path,
     device: Device = "cpu",
     dtype: torch.dtype = torch.bfloat16,
+    device_map: dict[str, int | str | torch.device] | str | None = None,
+    max_memory: dict[int | str, int | str] | None = None,
+    offload_folder: str | None = None,
 ) -> "AudioEncoder":
     """Load the audio VAE encoder (for preprocessing).
     Args:
@@ -130,20 +176,33 @@ def load_audio_vae_encoder(
     Returns:
         Loaded AudioEncoder
     """
-    from ltx_core.loader import SingleGPUModelBuilder
+    from ltx_core.loader import MultiGPUModelBuilder, SingleGPUModelBuilder
     from ltx_core.model.audio_vae import AUDIO_VAE_ENCODER_COMFY_KEYS_FILTER, AudioEncoderConfigurator
 
-    return SingleGPUModelBuilder(
+    builder_cls = MultiGPUModelBuilder if device_map is not None else SingleGPUModelBuilder
+    builder = builder_cls(
         model_path=str(checkpoint_path),
         model_class_configurator=AudioEncoderConfigurator,
         model_sd_ops=AUDIO_VAE_ENCODER_COMFY_KEYS_FILTER,
-    ).build(device=_to_torch_device(device), dtype=dtype)
+    )
+    if device_map is None:
+        return builder.build(device=_to_torch_device(device), dtype=dtype)
+    return builder.build(
+        device_map=device_map,
+        dtype=dtype,
+        max_memory=max_memory,
+        offload_folder=offload_folder,
+        device=_to_torch_device(device),
+    )
 
 
 def load_audio_vae_decoder(
     checkpoint_path: str | Path,
     device: Device = "cpu",
     dtype: torch.dtype = torch.bfloat16,
+    device_map: dict[str, int | str | torch.device] | str | None = None,
+    max_memory: dict[int | str, int | str] | None = None,
+    offload_folder: str | None = None,
 ) -> "AudioDecoder":
     """Load the audio VAE decoder.
     Args:
@@ -153,20 +212,33 @@ def load_audio_vae_decoder(
     Returns:
         Loaded AudioDecoder
     """
-    from ltx_core.loader import SingleGPUModelBuilder
+    from ltx_core.loader import MultiGPUModelBuilder, SingleGPUModelBuilder
     from ltx_core.model.audio_vae import AUDIO_VAE_DECODER_COMFY_KEYS_FILTER, AudioDecoderConfigurator
 
-    return SingleGPUModelBuilder(
+    builder_cls = MultiGPUModelBuilder if device_map is not None else SingleGPUModelBuilder
+    builder = builder_cls(
         model_path=str(checkpoint_path),
         model_class_configurator=AudioDecoderConfigurator,
         model_sd_ops=AUDIO_VAE_DECODER_COMFY_KEYS_FILTER,
-    ).build(device=_to_torch_device(device), dtype=dtype)
+    )
+    if device_map is None:
+        return builder.build(device=_to_torch_device(device), dtype=dtype)
+    return builder.build(
+        device_map=device_map,
+        dtype=dtype,
+        max_memory=max_memory,
+        offload_folder=offload_folder,
+        device=_to_torch_device(device),
+    )
 
 
 def load_vocoder(
     checkpoint_path: str | Path,
     device: Device = "cpu",
     dtype: torch.dtype = torch.bfloat16,
+    device_map: dict[str, int | str | torch.device] | str | None = None,
+    max_memory: dict[int | str, int | str] | None = None,
+    offload_folder: str | None = None,
 ) -> "Vocoder":
     """Load the vocoder (for audio waveform generation).
     Args:
@@ -176,14 +248,24 @@ def load_vocoder(
     Returns:
         Loaded Vocoder
     """
-    from ltx_core.loader import SingleGPUModelBuilder
+    from ltx_core.loader import MultiGPUModelBuilder, SingleGPUModelBuilder
     from ltx_core.model.audio_vae import VOCODER_COMFY_KEYS_FILTER, VocoderConfigurator
 
-    return SingleGPUModelBuilder(
+    builder_cls = MultiGPUModelBuilder if device_map is not None else SingleGPUModelBuilder
+    builder = builder_cls(
         model_path=str(checkpoint_path),
         model_class_configurator=VocoderConfigurator,
         model_sd_ops=VOCODER_COMFY_KEYS_FILTER,
-    ).build(device=_to_torch_device(device), dtype=dtype)
+    )
+    if device_map is None:
+        return builder.build(device=_to_torch_device(device), dtype=dtype)
+    return builder.build(
+        device_map=device_map,
+        dtype=dtype,
+        max_memory=max_memory,
+        offload_folder=offload_folder,
+        device=_to_torch_device(device),
+    )
 
 
 def load_text_encoder(
@@ -191,6 +273,12 @@ def load_text_encoder(
     gemma_model_path: str | Path,
     device: Device = "cpu",
     dtype: torch.dtype = torch.bfloat16,
+    device_map: dict[str, int | str | torch.device] | str | None = None,
+    max_memory: dict[int | str, int | str] | None = None,
+    offload_folder: str | None = None,
+    gemma_device_map: dict[str, int | str | torch.device] | str | None = None,
+    gemma_max_memory: dict[int | str, int | str] | None = None,
+    gemma_offload_folder: str | None = None,
 ) -> "AVGemmaTextEncoderModel":
     """Load the Gemma text encoder.
     Args:
@@ -201,6 +289,7 @@ def load_text_encoder(
     Returns:
         Loaded AVGemmaTextEncoderModel
     """
+    from ltx_core.loader.multi_gpu_model_builder import MultiGPUModelBuilder
     from ltx_core.loader.single_gpu_model_builder import SingleGPUModelBuilder
     from ltx_core.text_encoders.gemma.encoders.av_encoder import (
         AV_GEMMA_TEXT_ENCODER_KEY_OPS,
@@ -212,14 +301,28 @@ def load_text_encoder(
         raise ValueError(f"Gemma model path is not a directory: {gemma_model_path}")
 
     torch_device = _to_torch_device(device)
-    text_encoder = SingleGPUModelBuilder(
+    module_ops = module_ops_from_gemma_root(
+        str(gemma_model_path),
+        device_map=gemma_device_map,
+        max_memory=gemma_max_memory,
+        offload_folder=gemma_offload_folder,
+    )
+    builder_cls = MultiGPUModelBuilder if device_map is not None else SingleGPUModelBuilder
+    text_encoder = builder_cls(
         model_path=str(checkpoint_path),
         model_class_configurator=AVGemmaTextEncoderModelConfigurator,
         model_sd_ops=AV_GEMMA_TEXT_ENCODER_KEY_OPS,
-        module_ops=module_ops_from_gemma_root(str(gemma_model_path)),
-    ).build(device=torch_device, dtype=dtype)
-
-    return text_encoder
+        module_ops=module_ops,
+    )
+    if device_map is None:
+        return text_encoder.build(device=torch_device, dtype=dtype)
+    return text_encoder.build(
+        device_map=device_map,
+        dtype=dtype,
+        max_memory=max_memory,
+        offload_folder=offload_folder,
+        device=torch_device,
+    )
 
 
 # =============================================================================
