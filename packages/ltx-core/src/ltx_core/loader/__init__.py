@@ -21,6 +21,7 @@ from ltx_core.loader.sd_ops import (
     SDOps,
 )
 from ltx_core.loader.sft_loader import SafetensorsModelStateDictLoader, SafetensorsStateDictLoader
+from ltx_core.loader.multi_gpu_model_builder import MultiGPUModelBuilder
 from ltx_core.loader.single_gpu_model_builder import SingleGPUModelBuilder
 
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "SDOps",
     "SafetensorsModelStateDictLoader",
     "SafetensorsStateDictLoader",
+    "MultiGPUModelBuilder",
     "SingleGPUModelBuilder",
     "StateDict",
     "StateDictLoader",
