@@ -158,6 +158,9 @@ class GemmaTextEncoderModelBase(torch.nn.Module):
     def _model_input_device(self) -> torch.device:
         if self.model is None:
             return torch.device("cpu")
+        first_param = next(self.model.parameters(), None)
+        if first_param is not None and first_param.device.type != "meta":
+            return first_param.device
         embeddings = self.model.get_input_embeddings()
         if embeddings is None or embeddings.weight is None:
             return self.model.device
