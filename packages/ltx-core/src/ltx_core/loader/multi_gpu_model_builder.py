@@ -1,3 +1,4 @@
+import inspect
 import logging
 from dataclasses import dataclass, field, replace
 from typing import Generic
@@ -107,4 +108,8 @@ class MultiGPUModelBuilder(Generic[ModelType], ModelBuilderProtocol[ModelType], 
                 meta_model, max_memory=max_memory, no_split_module_classes=no_split_module_classes
             )
 
-        return dispatch_model(meta_model, device_map=device_map, offload_folder=offload_folder)
+        dispatch_signature = inspect.signature(dispatch_model)
+        if "offload_folder" in dispatch_signature.parameters:
+            return dispatch_model(meta_model, device_map=device_map, offload_folder=offload_folder)
+
+        return dispatch_model(meta_model, device_map=device_map)
