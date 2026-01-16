@@ -68,8 +68,9 @@ class GemmaTextEncoderModelBase(torch.nn.Module):
             tuple[torch.Tensor, dict[str, torch.Tensor]]: Encoded features and a dictionary with attention mask.
         """
         token_pairs = self.tokenizer.tokenize_with_weights(text)["gemma"]
-        input_ids = torch.tensor([[t[0] for t in token_pairs]], device=self.model.device)
-        attention_mask = torch.tensor([[w[1] for w in token_pairs]], device=self.model.device)
+        input_device = self._model_input_device()
+        input_ids = torch.tensor([[t[0] for t in token_pairs]], device=input_device)
+        attention_mask = torch.tensor([[w[1] for w in token_pairs]], device=input_device)
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=True)
         projected = self._run_feature_extractor(
             hidden_states=outputs.hidden_states, attention_mask=attention_mask, padding_side=padding_side
@@ -97,11 +98,11 @@ class GemmaTextEncoderModelBase(torch.nn.Module):
             text=text,
             images=image,
             return_tensors="pt",
-        ).to(self.model.device)
+        ).to(self._model_input_device())
         pad_token_id = self.processor.tokenizer.pad_token_id if self.processor.tokenizer.pad_token_id is not None else 0
         model_inputs = _pad_inputs_for_attention_alignment(model_inputs, pad_token_id=pad_token_id)
 
-        with torch.inference_mode(), torch.random.fork_rng(devices=[self.model.device]):
+        with torch.inference_mode(), torch.random.fork_rng(devices=[self._model_input_device()]):
             torch.manual_seed(seed)
             outputs = self.model.generate(
                 **model_inputs,
@@ -153,6 +154,14 @@ class GemmaTextEncoderModelBase(torch.nn.Module):
             },
         ]
         return self._enhance(messages, image=image, max_new_tokens=max_new_tokens, seed=seed)
+
+    def _model_input_device(self) -> torch.device:
+        if self.model is None:
+            return torch.device("cpu")
+        embeddings = self.model.get_input_embeddings()
+        if embeddings is None or embeddings.weight is None:
+            return self.model.device
+        return embeddings.weight.device
 
     @functools.cached_property
     def default_gemma_i2v_system_prompt(self) -> str:
